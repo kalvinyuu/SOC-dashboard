@@ -62,8 +62,22 @@ export const LoggerService = {
         StatsService.incrementLogs();
         StatsService.incrementSeverity(logEntry.severityLevel as any);
 
-        // Push directly to queue - generateLog now returns the correct DB shape
-        logQueue.push(logEntry);
+        // Normalize timestamp: handle both Date objects and stringified dates (from Pino/JSON)
+        let ts = logEntry.timestamp;
+        if (ts && !(ts instanceof Date)) {
+            ts = new Date(ts);
+        }
+
+        // Safety fallback for NOT NULL constraint
+        if (!ts || isNaN((ts as Date).getTime())) {
+            ts = new Date();
+        }
+
+        // Push directly to queue - generateLog/normalization ensures DB compatibility
+        logQueue.push({
+            ...logEntry,
+            timestamp: ts
+        });
 
         // Trigger processing if queue gets large
         if (logQueue.length >= BATCH_SIZE && !isProcessing) {

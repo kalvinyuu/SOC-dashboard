@@ -1,6 +1,6 @@
-@import "tailwindcss";
-@import "uplot/dist/uPlot.min.css";
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;700&display=swap');
+@import "uplot/dist/uPlot.min.css";
+@import "tailwindcss";
 
 @theme {
     --color-indigo-500: #6366f1;
