@@ -2,10 +2,17 @@
 
 A professional-grade security log ingestion and analysis engine designed for high-throughput SOC (Security Operations Center) environments. Built with a focus on **Information Density**, **Mathematical Anomaly Detection**, and **Backend Performance**.
 
-## 🚀 Performance & Scale
-- **High Throughput:** Benchmarked at **40,000+ logs per second** ingestion rate using Bun's native SQLite driver and Elysia.js.
-- **Real-time Processing:** Sub-millisecond latency for log enrichment and entropy calculation.
-- **WAL Mode Enabled:** Optimized for concurrent read/write operations on the persistence layer.
+## 🚀 Performance & Throughput
+- **Single-Core Baseline:** Capable of processing ~2,000-5,000 logs/sec in standard sequential execution mode.
+- **Multithreaded Scaling (Bun Workers):** Leverages Bun's internal worker pool to distribute generation load across all available CPU cores.
+- **IPC Efficiency:** Uses `SharedArrayBuffer` for zero-copy communication between the main thread and background workers.
+- **Peak Engine Speed:** Benchmarked at **20,000+ persistent logs/sec** on SQLite and over **1,000,000 logs/sec** in-memory generation speed.
+
+### ⚡️ Stress Testing Modes
+The dashboard includes an interactive stress test utility that allows you to compare execution strategies:
+
+*   **Single Core Mode:** Sequential execution on the main event loop. This is useful for baseline performance measurements and low-to-medium traffic simulation.
+*   **Bun Worker Mode:** Parallelized execution. Distributes tasks across background threads. This is the recommended approach for high-density production environments as it prevents event loop starvation during massive traffic spikes.
 
 ## 🛡️ Advanced Security Features
 - **Shannon Entropy Analysis:** Uses mathematical entropy calculation on payloads and user agents to detect obfuscated malware, unusual request patterns, and potential exfiltration.

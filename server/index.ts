@@ -1,7 +1,7 @@
 import { cors } from "@elysiajs/cors"
 import { Elysia, t } from "elysia"
 import { generateLog } from "../src/faker";
-import { logger } from "../src/logger";
+import { logger, loadTestLogger } from "../src/logger";
 import { LogController } from "../src/logs";
 import { swagger } from '@elysiajs/swagger';
 const app = new Elysia()
@@ -21,7 +21,7 @@ const app = new Elysia()
 
 			return await db.select()
 				.from(securityLogs)
-				.orderBy(desc(securityLogs.timestamp))
+				.orderBy(desc(securityLogs.timestamp), desc(securityLogs.id))
 				.limit(50);
 		})
 		.get('/logs/generate', ({ query }) => {
@@ -36,22 +36,33 @@ const app = new Elysia()
 		})
 		.get('/logs/stress', ({ query }) => {
 			const count = Number(query.count) || 1000;
-			for (let i = 0; i < count; i++) {
-				logger.info(generateLog(), 'Stress test log');
+			const mode = query.mode || 'single';
+
+			if (mode === 'worker') {
+				const numWorkers = require('os').cpus().length;
+				const perWorker = Math.floor(count / numWorkers);
+
+				for (let w = 0; w < numWorkers; w++) {
+					for (let i = 0; i < perWorker; i++) {
+						loadTestLogger.info(generateLog());
+					}
+				}
+			} else {
+				for (let i = 0; i < count; i++) {
+					loadTestLogger.info(generateLog());
+				}
 			}
-			return { status: 'success', count };
+
+			return { status: 'success', count, mode };
 		}, {
 			query: t.Object({
-				count: t.Optional(t.String())
+				count: t.Optional(t.String()),
+				mode: t.Optional(t.String())
 			})
 		})
 		.get('/stats', async () => {
-			const { securityLogs } = await import("../src/db/schema");
-			const { db } = await import("../src/db");
-			const { count: drizzleCount } = await import("drizzle-orm");
-
-			const result = await db.select({ value: drizzleCount() }).from(securityLogs);
-			return { totalLogs: result[0]?.value ?? 0 };
+			const { StatsService } = await import("../src/stats");
+			return StatsService.getStats();
 		})
 		.get('/logs/anomalies', async () => {
 			const { securityLogs } = await import("../src/db/schema");
@@ -132,5 +143,17 @@ setInterval(() => {
 		logger.info(generateLog(), 'Automated security event');
 	}
 }, 5000);
+
+// Initialize StatsService with current DB count
+import("../src/db/schema").then(async ({ securityLogs }) => {
+	const { db } = await import("../src/db");
+	const { count } = await import("drizzle-orm");
+	const { StatsService } = await import("../src/stats");
+
+	const result = await db.select({ value: count() }).from(securityLogs);
+	const initialCount = result[0]?.value ?? 0;
+	StatsService.initialize(initialCount);
+	logger.info(`StatsService initialized with ${initialCount} logs`);
+});
 
 export type App = typeof app

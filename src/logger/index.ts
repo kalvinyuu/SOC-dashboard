@@ -24,3 +24,8 @@ export const logger = pino(
     },
     pino.multistream(streams)
 );
+
+// High-performance logger for load tests that skips the stream overhead
+export const loadTestLogger = {
+    info: (log: any) => LoggerService.saveLog(log)
+};

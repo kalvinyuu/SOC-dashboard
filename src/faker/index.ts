@@ -5,86 +5,92 @@ import { calculateEntropy } from '../utils/entropy';
 const ATTACK_PATHS = [
   '/admin/login', '/.env', '/etc/passwd', '/wp-admin/phpmyadmin',
   '/api/v1/debug', '/config/database.yaml', '/.git/config',
-  '/api/v1/users/export?token=admin', '/sh?cmd=id', '/cgi-bin/test-cgi'
-];
-
-const ATTACK_SIGNATURES = [
-  "' OR '1'='1", "<script>alert(1)</script>", "../../etc/shadow",
-  "();/usr/bin/id", "<?php system($_GET['cmd']); ?>", "admin'--"
-];
-
-const THREAT_VECTORS = [
-  'SQL_INJECTION', 'XSS_ATTEMPT', 'PATH_TRAVERSAL',
-  'REMOTE_CODE_EXECUTION', 'CREDENTIAL_STUFFING', 'OVERSCOPTED_API_ACCESS'
-];
-
-const SCRAPER_USER_AGENTS = [
-  'Scrapy/2.5.0 (+https://scrapy.org)',
-  'python-requests/2.26.0',
-  'HeadlessChrome/91.0.4472.164',
-  'AhrefsBot/7.0; +http://ahrefs.com/robot/',
-  'Go-http-client/1.1'
+  '/api/v1/users/export?token=admin', '/sh?cmd=id'
 ];
 
 const NORMAL_PATHS = [
-  // Static Assets (Low interest for security)
   '/assets/index.js', '/assets/vendor.css', '/favicon.ico', '/logo.png',
-  // Standard UI Routes
   '/dashboard', '/settings', '/profile', '/messages/inbox',
-  // Healthy API Traffic
-  '/api/v1/health', '/api/v1/notifications/count', '/api/v1/user/theme'
+  '/api/v1/health', '/api/v1/notifications/count'
 ];
 
+const encoder = new TextEncoder();
+const encodeList = (list: string[]) => list.map(s => encoder.encode(s));
+
+const ATTACK_PATHS_BUF = encodeList(ATTACK_PATHS);
+const NORMAL_PATHS_BUF = encodeList(NORMAL_PATHS);
+
+// PRE-ENCODE random data with classic for-loops to avoid Array.from/map GC pressure
+const PREBAKED_IPS: string[] = [];
+for (let i = 0; i < 1000; i++) PREBAKED_IPS.push(faker.internet.ipv4());
+
+const PREBAKED_LOCATIONS: string[] = [];
+for (let i = 0; i < 100; i++) PREBAKED_LOCATIONS.push(`${faker.location.city()}, ${faker.location.countryCode()}`);
+
+const PREBAKED_AGENTS: string[] = [];
+const PREBAKED_AGENTS_BUF: Uint8Array[] = [];
+for (let i = 0; i < 50; i++) {
+  const agent = faker.internet.userAgent();
+  PREBAKED_AGENTS.push(agent);
+  PREBAKED_AGENTS_BUF.push(encoder.encode(agent));
+}
+
+const PREBAKED_UUIDS: string[] = [];
+for (let i = 0; i < 1000; i++) PREBAKED_UUIDS.push(faker.string.uuid());
+
+const SCRAPER_AGENT = 'Scrapy/2.5.0';
+const SCRAPER_AGENT_BUF = encoder.encode(SCRAPER_AGENT);
+
+// Pre-calculate entropy for common paths using for-loops
+const PATH_ENTROPY = new Map<Uint8Array, number>();
+const ALL_PATHS = [ATTACK_PATHS_BUF, NORMAL_PATHS_BUF];
+for (let i = 0; i < ALL_PATHS.length; i++) {
+  const list = ALL_PATHS[i]!;
+  for (let j = 0; j < list.length; j++) {
+    const p = list[j]!;
+    PATH_ENTROPY.set(p, calculateEntropy(p));
+  }
+}
+
+const SEC_ALERT_BUF = encoder.encode('SEC_ALERT');
+const PAYLOAD_BUF = new Uint8Array(2048);
+const decoder = new TextDecoder();
+
+// Hot path generator
 export const generateLog = (): AuditLog => {
-  // Use Faker's built-in HTTP methods
-  const statusCode = faker.internet.httpStatusCode({
-    types: ['success', 'clientError', 'serverError']
-  });
-
-  // Logic to map severity based on the generated status code
-  const getSeverity = (code: number): LogSeverity => {
-    if (code >= 500) return 'CRITICAL';
-    if (code >= 400) return 'WARNING';
-    return 'INFO';
-  };
-
   const isAttack = Math.random() > 0.85;
   const isScraper = !isAttack && Math.random() > 0.95;
-  const eventTypes: EventType[] = ['HTTP', 'AUTH', 'WAF_BLOCK'];
 
-  const agent = isScraper
-    ? faker.helpers.arrayElement(SCRAPER_USER_AGENTS)
-    : faker.internet.userAgent();
-  let path = isAttack
-    ? faker.helpers.arrayElement(ATTACK_PATHS)
-    : faker.helpers.arrayElement(NORMAL_PATHS);
+  const paths = isAttack ? ATTACK_PATHS : NORMAL_PATHS;
+  const pathBufs = isAttack ? ATTACK_PATHS_BUF : NORMAL_PATHS_BUF;
+  const pathIdx = Math.floor(Math.random() * paths.length);
 
-  let threatVector = 'NONE';
-  if (isAttack) {
-    const signature = faker.helpers.arrayElement(ATTACK_SIGNATURES);
-    path = `${path}?q=${encodeURIComponent(signature)}`;
-    threatVector = faker.helpers.arrayElement(THREAT_VECTORS);
-  } else if (isScraper) {
-    threatVector = 'WEB_SCRAPER';
-  }
+  const path = paths[pathIdx]!;
+  const pathBuf = pathBufs[pathIdx]!;
 
-  const payload = `${path}${agent}${isAttack ? 'SEC_ALERT' : ''}`;
-  const entropy = calculateEntropy(payload);
+  const agentIdx = Math.floor(Math.random() * PREBAKED_AGENTS.length);
+  const agentStr = isScraper ? SCRAPER_AGENT : PREBAKED_AGENTS[agentIdx]!;
+
+  // Use pre-calculated entropy - bitwise/math rounding is significantly faster than toFixed()
+  const baseEntropy = PATH_ENTROPY.get(pathBuf) || 4.2;
+  const rawEntropy = baseEntropy + (isAttack ? 2.5 : 0) + (Math.random() * 0.5);
+  const entropy = Math.round(rawEntropy * 10000) / 10000;
+  const statusCode = isAttack ? 403 : (Math.random() > 0.95 ? 500 : 200);
 
   return {
     timestamp: new Date(),
-    method: isAttack ? 'POST' : faker.internet.httpMethod(),
+    method: isAttack ? 'POST' : 'GET',
     path,
     statusCode,
-    eventType: isAttack ? 'WAF_BLOCK' : faker.helpers.arrayElement(eventTypes),
-    location: `${faker.location.city()}, ${faker.location.countryCode()}`,
-    ipAddress: faker.internet.ipv4(),
-    userAgent: agent,
+    eventType: isAttack ? 'WAF_BLOCK' : 'HTTP',
+    location: PREBAKED_LOCATIONS[Math.floor(Math.random() * PREBAKED_LOCATIONS.length)]!,
+    ipAddress: PREBAKED_IPS[Math.floor(Math.random() * PREBAKED_IPS.length)]!,
+    userAgent: agentStr,
     shannonEntropy: entropy,
-    requestSizeBytes: faker.number.int({ min: 128, max: 10000 }),
-    correlationId: faker.string.uuid(),
-    severityLevel: isAttack ? 'CRITICAL' : (isScraper ? 'WARNING' : getSeverity(statusCode)),
-    threatVector,
-    threatScore: (entropy * 1.5) + (isAttack ? 5 : 0) + (isScraper ? 3 : 0) + (statusCode >= 400 ? 2 : 0)
+    requestSizeBytes: Math.floor(Math.random() * 5000) + 100,
+    correlationId: PREBAKED_UUIDS[Math.floor(Math.random() * PREBAKED_UUIDS.length)]!,
+    severityLevel: isAttack ? 'CRITICAL' : (statusCode >= 500 ? 'WARNING' : 'INFO'),
+    threatVector: isAttack ? 'WAF_RULE_VIOLATION' : 'NONE',
+    threatScore: (entropy * 1.5) + (isAttack ? 5 : 0)
   };
 };

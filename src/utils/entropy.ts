@@ -1,25 +1,33 @@
+// Pre-allocate a frequency table to reuse (per worker/thread)
+const FREQ_TABLE = new Uint32Array(256);
+
 /**
  * Computes the Shannon Entropy of a given buffer.
- * Entropy is a measure of the unpredictability of data.
- * Values typically range from 0 (completely predictable) to 8 (random).
+ * Optimized for Bun/V8 using TypedArrays and direct buffer access.
  */
 export function calculateEntropy(data: Uint8Array | string): number {
     const buffer = typeof data === 'string' ? new TextEncoder().encode(data) : data;
-    if (buffer.length === 0) return 0;
+    const len = buffer.length;
+    if (len === 0) return 0;
 
-    const freq = new Uint32Array(256);
-    for (let i = 0; i < buffer.length; i++) {
+    // Reset frequency table
+    FREQ_TABLE.fill(0);
+
+    for (let i = 0; i < len; i++) {
         const byte = buffer[i];
         if (byte !== undefined) {
-            freq[byte]++;
+            const current = FREQ_TABLE[byte];
+            if (current !== undefined) {
+                FREQ_TABLE[byte] = current + 1;
+            }
         }
     }
 
     let entropy = 0;
     for (let i = 0; i < 256; i++) {
-        const f = freq[i]!;
-        if (f > 0) {
-            const p = f / buffer.length;
+        const f = FREQ_TABLE[i];
+        if (f !== undefined && f > 0) {
+            const p = f / len;
             entropy -= p * Math.log2(p);
         }
     }
